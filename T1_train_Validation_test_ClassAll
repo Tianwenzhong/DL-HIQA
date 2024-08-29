@@ -1,0 +1,451 @@
+from torch.optim import lr_scheduler
+from torch.optim.lr_scheduler import LambdaLR
+from tqdm import tqdm
+import time
+import csv
+
+from _AA_Index_calculation import Index_calculation
+from utilsTrainValTest import MiniImageNet
+from ptflops import get_model_complexity_info
+# from utils import MiniImageNet
+from Model_2D_Class.Resnet import resnet_mzy
+from Model_2D_Class.ConvNext.ConvNext import ConvNeXt, convnext_base
+from Model_2D_Class.EfficientNet.efficientNet import efficientnet_b1
+from Model_2D_Class.Inception.InceptionV4T3a1bNoFRFB import inceptionv4
+from Model_2D_Class.Inception.InceptionLHQ import InceptionLHQ
+from Model_2D_Class.MobileNet.model_v2 import MobileNetV2
+from Model_2D_Class.MobileNet.model_v3 import MobileNetV3
+from Model_2D_Class.Vgg.vgg import vgg16, vgg11_bn
+# from Model_2D_Class.Inception.IncTWZ.IncTWZ import IncTWZ, IncTWZ_CBAM, IncTWZ_SelfAttention, IncTWZ_4CBAM
+# from Model_2D_Class.Inception.IncTWZ7.IncTWZ7 import IncTWZ_CBAM
+from Model_2D_Class.Inception.IncT1.IncT1BRCon19B import IncTWZ_CBAM
+# from Model_2D_Class.Inception.IncTWZ.IncTWZfca1con import IncTWZ_CBAM
+from MyModel.netFrequencyInceptionClass import _3D2D_MCNet
+
+import matplotlib.pyplot as plt
+
+# # from netFrequency import ADRN
+# # from netFCANet import ADRN
+# # from vgg import vgg11_bn
+import torch
+from math import sqrt
+import os
+import pandas as pd
+import numpy as np
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, average_precision_score, cohen_kappa_score
+from torch.nn.parallel import DistributedDataParallel as DDP
+import warnings
+import time
+
+warnings.filterwarnings('ignore')
+
+def _update_val_acc_image(vallist, path, batch, lr, epoch):
+    y = vallist
+    y1 = []
+    for i in range(len(y)):
+        tempy_float = float(y[i])  # str转数值
+        y1.append(tempy_float * 100)  # 由后放入y1中
+    plt.figure(figsize=(8, 7))  # 窗口大小可以自己设置
+
+    x1 = list(range(0, len(vallist)))
+    plt.plot(x1, y1, '.-', label='accuracy')  # label对于的是legend显示的信息名
+    plt.grid()  # 显示网格
+    plt_title = 'BATCH_SIZE = ' + str(batch) + '; LEARNING_RATE:' + str(lr)
+    plt.title(plt_title)  # 标题名
+    plt.xlabel('per' + str(epoch) + 'times')  # 横坐标名
+    plt.ylabel('ACC')  # 纵坐标名
+    plt.legend()  # 显示曲线信息
+    savePath = path + "//val_acc_curve.jpg"
+    plt.savefig(savePath)  # 当前路径下保存图片名字
+    plt.close('all')
+
+def _update_val_loss_image(vallist, path, batch, lr, epoch):
+    y = vallist
+    y1 = []
+    for i in range(len(y)):
+        tempy_float = float(y[i])  # str转数值
+        y1.append(tempy_float)  # 由后放入y1中
+    plt.figure(figsize=(8, 7))  # 窗口大小可以自己设置
+
+    x1 = list(range(0, len(vallist)))
+    plt.plot(x1, y1, '.-', label='loss')  # label对于的是legend显示的信息名
+    plt.grid()  # 显示网格
+    plt_title = 'BATCH_SIZE = ' + str(batch) + '; LEARNING_RATE:' + str(lr)
+    plt.title(plt_title)  # 标题名
+    plt.xlabel('per' + str(epoch) + 'times')  # 横坐标名
+    plt.ylabel('loss')  # 纵坐标名
+    plt.legend()  # 显示曲线信息
+    savePath = path + "//val_loss_curve.jpg"
+    plt.savefig(savePath)  # 当前路径下保存图片名字
+    plt.close('all')
+
+def _update_train_acc_image(trainlist, path, batch, lr, epoch):
+    y = trainlist
+    y1 = []
+    for i in range(len(y)):
+        tempy_float = float(y[i])  # str转数值
+        y1.append(tempy_float * 100)  # 由后放入y1中
+    plt.figure(figsize=(8, 7))  # 窗口大小可以自己设置
+
+    x1 = list(range(0, len(trainlist)))
+    plt.plot(x1, y1, '.-', label='accuracy')  # label对于的是legend显示的信息名
+    plt.grid()  # 显示网格
+    plt_title = 'BATCH_SIZE = ' + str(batch) + '; LEARNING_RATE:' + str(lr)
+    plt.title(plt_title)  # 标题名
+    plt.xlabel('per' + str(epoch) + 'times')  # 横坐标名
+    plt.ylabel('ACC')  # 纵坐标名
+    plt.legend()  # 显示曲线信息
+    savePath = path + "//train_acc_curve.jpg"
+    plt.savefig(savePath)  # 当前路径下保存图片名字
+    plt.close('all')
+
+def _update_train_loss_image(trainlist, path, batch, lr, epoch):
+    y = trainlist
+    y1 = []
+    for i in range(len(y)):
+        tempy_float = float(y[i])  # str转数值
+        y1.append(tempy_float)  # 由后放入y1中
+    plt.figure(figsize=(8, 7))  # 窗口大小可以自己设置
+
+    x1 = list(range(0, len(trainlist)))
+    plt.plot(x1, y1, '.-', label='loss')  # label对于的是legend显示的信息名
+    plt.grid()  # 显示网格
+    plt_title = 'BATCH_SIZE = ' + str(batch) + '; LEARNING_RATE:' + str(lr)
+    plt.title(plt_title)  # 标题名
+    plt.xlabel('per' + str(epoch) + 'times')  # 横坐标名
+    plt.ylabel('loss')  # 纵坐标名
+    plt.legend()  # 显示曲线信息
+    savePath = path + "//train_loss_curve.jpg"
+    plt.savefig(savePath)  # 当前路径下保存图片名字
+    plt.close('all')
+
+# 试验其他参数配置
+def otherParam(experiment,remark):
+    # 获取时间
+    current_timestamp = time.time()
+    current_time_str = time.strftime('%Y%m%d_%H%M', time.localtime(current_timestamp))
+    if len(remark) == 0:
+        all = experiment + '_' + current_time_str
+        path = r"../result" + "//" + all
+        if not os.path.exists(path):
+            os.mkdir(path)
+        print("实验创建成功")
+        return path
+    else:
+        all = experiment + '_' + current_time_str + '_' + remark
+        path = r"../result" + "//" + all
+        if not os.path.exists(path):
+            os.mkdir(path)
+        print("实验创建成功")
+        return path
+
+# 本次实验的所有参数记录
+def experimentRecord(EPOCH, lr, batch_size, band, re_size, experiment, remark):
+
+    with open(os.path.join(path, "实验记录.txt"), 'a') as file:
+        file.write("experiment: " + str(experiment) + "/n")
+        file.write("epoch: " + str(EPOCH) +"/n")
+        file.write("lr: " + str(lr) + "/n")
+        file.write("batch_size: " + str(batch_size) + "/n")
+        file.write("band: " + str(band) + "/n")
+        file.write("re_size: " + str(re_size) + "/n")
+        file.write("remark: " + str(remark) + "/n")
+
+def train(train_loader, net, optimizer, scheduler, criterion, path, epoch, device):
+    # 训练
+    net.train()
+    train_predictions = []
+    train_true_labels = []
+    total_loss = 0
+    optimizer.zero_grad()
+    for i, (inputs, labels, names) in enumerate(train_loader):
+        inputs = inputs.to(device)
+        labels = labels.to(device).long()  # Convert labels to torch.long
+        outputs = net(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        total_loss += loss.item()
+        # print(i, "iloss", loss.item())
+        total_loss += loss.item()
+        _, predicted = torch.max(outputs.data, 1)
+        train_predictions.extend(predicted.cpu().numpy())
+        train_true_labels.extend(labels.cpu().numpy())
+
+    optimizer.step()
+    scheduler.step()
+    accuracy = accuracy_score(train_true_labels, train_predictions)
+
+    # print('Epoch: %d   loss: %.6f' % (epoch + 1, total_loss))
+    EpochAverageLoss = total_loss / (len(train_loader))
+
+    with open(os.path.join(path, "实验记录.txt"), 'a') as file:
+        file.write('Train：epoch{:d} Loss: {:.5f} Accuracy: {:.5f}'.format(epoch + 1, EpochAverageLoss, accuracy))
+    # 保存损失
+    #file_train_loss = open(path + '\\train_loss.txt', 'a')
+    with open(path + "//train_loss.txt", "a") as file:
+        file.write('{:.6f}/n'.format(EpochAverageLoss))
+
+    # 保存最新epoch的模型参数
+    checkpoint_path = os.path.join(path, 'ckpt_last_acc.pkl')
+    torch.save({
+        'net': net.state_dict(),
+        'epoch': epoch,
+        'accuracy': accuracy,
+        # 'sensitivity': sensitivity,
+        # 'specificity': specificity,
+        # 'auc': auc,
+        # 'gmean': gmean,
+        # 'precision': precision,
+        # 'f1': f1,
+    }, checkpoint_path)
+    return accuracy, EpochAverageLoss
+
+def val(val_loader, net, criterion, val_acc_list, path, epoch, device):
+    # 验证
+    net.eval()
+    predictions = []
+    true_labels = []
+    total_loss = 0
+    optimizer.zero_grad()
+
+    predictList = []
+    labelList = []
+
+    for i, (inputs, labels, names) in enumerate(val_loader):
+        inputs = inputs.to(device)
+        labels = labels.to(device).long()  # Convert labels to torch.long
+        outputs = net(inputs)
+        loss = criterion(outputs, labels)
+        total_loss += loss.item()
+        total_loss += loss.item()
+        _, predicted = torch.max(outputs.data, 1)
+        predictions.extend(predicted.cpu().numpy())
+        predictList = predictions
+        true_labels.extend(labels.cpu().numpy())
+        labelList = true_labels
+        # acc 计算完了
+    accuracy = accuracy_score(true_labels, predictions)
+
+    # print('Epoch: %d   loss: %.6f' % (epoch + 1, total_loss))
+    EpochAverageLoss = total_loss / (len(train_loader))
+    print('Val：epoch{:d} Loss: {:.5f} Accuracy: {:.5f}'.format(epoch + 1, EpochAverageLoss, accuracy))
+
+    with open(os.path.join(path, "实验记录.txt"), 'a') as file:
+        file.write(' Val：epoch{:d} Loss: {:.5f} Accuracy: {:.5f}'.format(epoch + 1, EpochAverageLoss, accuracy)+'\n')
+    #保存最好epoch的模型参数
+    val_acc_list.append(accuracy)
+    if max(val_acc_list) <= accuracy:
+
+        checkpoint_path = os.path.join(path, 'ckpt_best_acc.pkl')
+
+        torch.save({
+            'net': net.state_dict(),
+            'epoch': epoch,
+            'accuracy': accuracy,
+            # 'sensitivity': sensitivity,
+            # 'specificity': specificity,
+            # 'auc': auc,
+            # 'gmean': gmean,
+            # 'precision': precision,
+            # 'f1': f1,
+        }, checkpoint_path)
+
+        # 定义要写入csv文件的数据
+        nameList = val_loader.dataset.data_path
+        with open(path + '//val_best_Result.csv', 'w', newline='') as file:
+            file.truncate()
+            writer = csv.writer(file)
+            writer.writerow(['Name', 'True', 'Pred'])
+            # 写入列表到第二列
+            for i in range(len(labelList)):
+                writer.writerow([nameList[i], labelList[i], predictList[i]])
+
+    # 保存loss
+    #file_val_loss = open(path + "\\val_loss.txt", 'a')
+    with open(path + "//val_loss.txt", "a") as file:
+        file.write('{:.6f}/n'.format(EpochAverageLoss))
+    return accuracy, EpochAverageLoss
+
+def test(model, split, data_loader, device):
+    model.eval()
+    predictions = []
+    true_labels = []
+    data_names = []
+
+
+    with torch.no_grad():
+        for i, (inputs, labels, names) in enumerate(data_loader):
+            inputs = inputs.to(device)
+            labels = labels.to(device).long()  # Convert labels to torch.long
+            outputs = net(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            #  test 结果保存
+            predictions.extend(predicted.cpu().numpy())
+            true_labels.extend(labels.cpu().numpy())
+            data_names.extend(names)
+
+        accuracy = accuracy_score(true_labels, predictions)
+        precision = precision_score(true_labels, predictions, average='weighted')
+        recall = recall_score(true_labels, predictions, average='weighted')
+        f1 = f1_score(true_labels, predictions, average='weighted')
+
+        # 计算宏平均AP、微平均AP、Kapper的函数
+        ap_macro, ap_micro, kappa = Index_calculation(true_labels, predictions)
+
+        print(
+            'Test: {} Accuracy: {:.5f} Precision: {:.5f} Recall: {:.5f} F1: {:.5f} Macro AP: {:.5f} Micro AP: {:.5f} Kappa: {:.5f}'.format(
+                split, accuracy, precision, recall, f1, ap_macro, ap_micro, kappa))
+
+        with open(os.path.join(path, "实验记录.txt"), 'a') as file:
+            file.write(
+                'Test: {} Accuracy: {:.5f} Precision: {:.5f} Recall: {:.5f} F1: {:.5f} Macro AP: {:.5f} Micro AP: {:.5f} Kappa: {:.5f}'.format(
+                    split, accuracy, precision, recall, f1, ap_macro, ap_micro, kappa) + '/n')
+
+        # print(
+        #     'Test：{} Accuracy:{:.5f}'.format(split, accuracy, ))
+        # with open(os.path.join(path, "实验记录.txt"), 'a') as file:
+        #     file.write('Test：{} Accuracy:{:.5f}'.format(split, accuracy,) + '\n')
+
+        # 把结果数据保存进csv文件
+        with open(path + '//test_Result.csv', 'a', newline='') as file:
+            file.truncate()
+            writer = csv.writer(file)
+            writer.writerow(['Name', 'True', 'Pred'])
+            # 写入列表到第二列
+            for i in range(len(data_names)):
+                writer.writerow([data_names[i], true_labels[i], predictions[i]])
+                # 定义要写入csv文件的数据
+
+
+    # ------------------------- params和算法复杂度Flops的计算---------------------------------------
+    input_res = (40, 256, 256)
+    macs, params = get_model_complexity_info(net, input_res, as_strings=True, print_per_layer_stat=True)
+    with open(os.path.join(path, "实验记录.txt"), 'a') as file:
+        file.write('模型 FLOPs: {}  模型的Params: {}'.format(macs, params, ) + '/n')
+    # ------------------------ params和Flops的计算 ----------------------------------------
+
+
+# ---------参数---------------
+EPOCH = 1000  # 迭代次数
+lr = 0.0005  # 学习率
+batch_size = 32  # 批量大小 √1
+band = 40  # 波段数量
+re_size = (256, 256, band)  # resize大小
+
+experiment = "IncT1BRCon19BJiajian_IncLHQin56"  # 试验名称
+remark = "RMMLossAdamW32B200E00005lr"      # 备注
+
+# ---------------------------------
+path = otherParam(experiment, remark)
+experimentRecord(EPOCH, lr, batch_size, band, re_size, experiment, remark)
+
+# ---------------------------
+
+# 是否有GPU
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cuda:0")  #只使用CPU的
+print("GPU是否可用", torch.cuda.is_available())
+
+# 加载数据
+print("数据加载")
+train_dataset = MiniImageNet("train.csv", resize=re_size)
+print("train数据加载完成")
+val_dataset = MiniImageNet("val.csv", resize=re_size)
+print("val数据加载完成")
+test_dataset = MiniImageNet("test.csv", resize=re_size)
+print("test数据加载完成")
+
+train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=batch_size, shuffle=True)
+test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=True)
+
+# 创建了一个名为net的ADRN类的实例，并将其分配给变量net。代码中的ADRN类在初始化时接受一个参数band和num_classes。
+# .to(device)这部分代码表示将ADRN实例移动到特定的设备上。
+# net = resnet_mzy.resnet34().to(device)                           # √resnext50_32x4d()
+# net = MobileNetV2(num_classes=5).to(device)                      # √
+# net = inceptionv4(num_classes=5, pretrained=None).to(device)     # √ batch30
+# net = InceptionLHQ(num_blocks=2, num_classes=5).to(device)       # LHQ
+# net = convnext_base(num_classes=5).to(device)                    # 参数量过大，极易爆显存 batch需要调小
+# net = efficientnet_b0(num_classes=5).to(device)                  # √ 参数量很小，batch可调30以上
+# net = efficientnet_b1(num_classes=5).to(device)                  # √ 参数量很小，batch可调30以上
+# net = vgg16().to(device)                                         # √
+# net = vgg11_bn().to(device)
+net = IncTWZ_CBAM(num_classes=5).to(device)
+# net = IncTWZ_SelfAttention(num_classes=5).to(device)
+# net = IncTWZ_4CBAM(num_classes=5).to(device)
+
+
+# net = _3D2D_MCNet(band).to(device)                              # √
+# net = vgg16().to(device)
+# net = vgg11_bn().to(device)
+criterion = nn.MultiMarginLoss()  # 交叉熵损失函数CrossEntropyLoss()
+#optimizer = optim.SGD(net.parameters(), lr=lr)
+
+optimizer = optim.AdamW(net.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.0001) #AdamWbetas=(0.9, 0.999),
+# ---------新的优化器衰减"""设置lr策略"""--------------------
+def lr_lambda(epoch):
+    if epoch < 0.1 * EPOCH:  # 前10%的epoch保持学习率不变
+        return 1.0
+    else:
+        return np.math.exp(0.01 * (0.1 * EPOCH - epoch))  # 调整指数衰减速率
+
+scheduler = LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda)
+# ----------------------------------------
+
+# -----------优化器设置线性衰减-------------------
+# def lr_lambda(epoch):
+#     return 1 - epoch / EPOCH  # 线性衰减公式
+# scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+# 即初始学习率乘以它Epoch 100: learning_rate = 0.001 * (1 - 100/200) = 0.0005
+# --------------------训练-------------------- #
+start_time = time.time()
+train_acc_list = []
+train_loss_list = []
+val_acc_list = []
+val_loss_list = []
+for epoch in tqdm(range(EPOCH)):
+    # 训练
+    train_acc, train_loss = train(train_loader, net, optimizer, scheduler, criterion, path, epoch, device)
+    train_acc_list.append(train_acc)
+    train_loss_list.append(train_loss)
+    _update_train_acc_image(trainlist=train_acc_list, path=path, batch=batch_size, lr=lr, epoch=EPOCH)
+    _update_train_loss_image(trainlist=train_loss_list, path=path, batch=batch_size, lr=lr, epoch=EPOCH)
+    torch.cuda.empty_cache()  # 来释放未使用的GPU内存
+
+    # 验证
+    val_acc, val_loss = val(val_loader, net, criterion, val_acc_list, path, epoch, device)
+    val_loss_list.append(val_loss)
+    _update_val_acc_image(val_acc_list, path=path, batch=batch_size, lr=lr, epoch=EPOCH)
+    _update_val_loss_image(val_loss_list, path=path, batch=batch_size, lr=lr, epoch=EPOCH)
+    torch.cuda.empty_cache()  # 来释放未使用的GPU内存
+
+end_time = time.time()
+train_time = end_time - start_time
+print('train_time')
+with open(os.path.join(path, "实验记录.txt"), 'a') as file:
+    file.write('train_time: {}\n'.format(train_time))
+torch.cuda.empty_cache()  # 来释放未使用的GPU内存
+
+# ------------测试预测结果-------
+print('==> Testing model...')
+acc_list = np.array(val_acc_list)
+index = acc_list.argmax()
+print('epoch %s is the best model' % (index))
+restore_model_path = os.path.join(path, 'ckpt_best_acc.pkl')
+# model_name = r''
+# restore_model_path = os.path.join(dir_path, model_name)
+print("加载模型:", restore_model_path)
+# restore_model_path = os.path.join(dir_path, 'ckpt_%d_acc_%.5f.pth' % (index, acc_list[index]))
+net.load_state_dict(torch.load(restore_model_path)['net'])
+# train和val的测试，能用来看，给到test的模型是怎么样的
+# test(net, 'train', train_loader, device, flag, task, output_root=output_root)
+# test(net, 'val', val_loader, device, flag, task, output_root=output_root)
+test(net, 'test', test_loader, device)
+
+
+
+
+
+
